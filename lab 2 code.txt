@@ -1,0 +1,292 @@
+#include <avr/io.h>
+#include <util/delay.h>
+#include <avr/eeprom.h>
+#include <avr/interrupt.h>
+#define CLOCK 4000000
+#define BAUD 31250
+#define BRC 7 //((CLOCK/(16UL*BUAD))-1)
+
+void USART_init (unsigned int baud){
+	UBRRH = (unsigned char) (baud>>8);
+	UBRRL = (unsigned char) baud;
+	UCSRB = (1<<RXEN) | (1<<TXEN);
+	UCSRC = (1<< URSEL) | (1<<UCSZ0) | (1<<UCSZ1);
+	
+}
+
+
+void USART_Transmit(unsigned char data){
+	while(!(UCSRA&(1<<UDRE)));
+	UDR = data;
+}
+
+
+unsigned char USART_Receive(void){ //return the byte MIDI received
+     //Wait for data to be recieved 
+    while(!(UCSRA & (1<<RXC))){
+		if(!(PINA&0x01)) break;
+	};
+	
+    return UDR;
+}
+void eepromWrite(unsigned int uiAddress, unsigned char ucData){
+	while(EECR & (1<<EEWE)); //check if previous write is complete
+	//set data registers
+	EEAR = uiAddress;
+	EEDR = ucData;
+	EECR |= (1<<EEMWE);
+	EECR |= (1<<EEWE);
+}
+
+unsigned char eepromRead(unsigned int uiAddress){
+	while(EECR & (1<<EEWE)); //check if previous write is complete
+	EEAR=uiAddress;
+	EECR |= (1<<EERE);
+	return EEDR;
+}
+
+ISR(TIMER1_COMPA_vect){
+	PORTB = 0;
+}
+
+
+
+unsigned int recordingNotes(){
+	int addr = 0;
+	unsigned char data;	
+	uint8_t tCountH;
+	uint8_t tCountL;
+	int i = 0;
+	 //reset timer
+	OCR1A = 12500;
+	sei();
+	TIMSK = (1<<OCIE1A);
+
+	while(PINA&0x01){
+		TCNT1=0;
+		if(PINA&0x01) {
+		for(i=0;i<6;i++){
+			data = USART_Receive();
+			if(PINA&0x01){
+				if(i == 0){
+					tCountH = TCNT1>>8;
+					tCountL = TCNT1&0xFF;
+				}
+				eepromWrite(addr,data);
+				}
+			addr++;
+
+			if(i==1){
+				PORTB = data;
+            }
+        }
+		if(PINA&0x01){
+		if(i==6){
+				
+				eepromWrite(addr,tCountH);
+				addr++;
+				eepromWrite(addr,tCountL);
+				addr++;
+				i=0;
+				
+				
+		}
+		}
+		}
+	}
+	return addr;
+}
+
+void playbackNormal(unsigned int maxAddr){
+	int addr=0;
+	unsigned char data;
+	int i;
+	uint16_t time;
+	uint8_t timeH;
+	uint8_t timeL;
+	OCR1A = 12500;
+	sei();
+	TIMSK = (1<<OCIE1A);
+	
+	while((addr<(maxAddr-8))&&(PINA & (1<<1))){
+		i = 0;
+		TCNT1=0;
+		if(addr > 7) while(TCNT1<time);
+		while(i < 6){
+			data = eepromRead(addr);
+			addr++;
+		
+			if(i == 1) {
+				PORTB = data;
+				USART_Transmit(data);
+			}
+			
+			else USART_Transmit(data);
+			i++;
+		}
+		if(i == 6){
+			timeH = eepromRead(addr+8);
+			addr++;
+			timeL = eepromRead(addr+8);
+			addr++;
+			time = (timeH<<8)|(timeL);
+			
+		}
+				
+	}
+	
+}
+
+void playbackSlow(unsigned int maxAddr){
+	int addr=0;
+	unsigned char data;
+	int i;
+	uint16_t time;
+	uint8_t timeH;
+	uint8_t timeL;
+	OCR1A = 12500;
+	sei();
+	TIMSK = (1<<OCIE1A);
+	
+	while((addr<(maxAddr-8))&&(PINA & (1<<1))){
+		i = 0;
+		TCNT1=0;
+		if(addr > 7) while(TCNT1<(time*2));
+		while(i < 6){
+			data = eepromRead(addr);
+			addr++;
+		
+			if(i == 1) {
+				PORTB = data;
+				USART_Transmit(data);
+			}
+			
+			else USART_Transmit(data);
+			i++;
+		}
+		if(i == 6){
+			timeH = eepromRead(addr+8);
+			addr++;
+			timeL = eepromRead(addr+8);
+			addr++;
+			time = (timeH<<8)|(timeL);
+			
+		}
+				
+	}
+}
+void playbackFast(unsigned int maxAddr){
+	int addr=0;
+	unsigned char data;
+	int i;
+	uint16_t time;
+	uint8_t timeH;
+	uint8_t timeL;
+	OCR1A = 12500;
+	sei();
+	TIMSK = (1<<OCIE1A);
+	
+	while((addr<(maxAddr-8))&&(PINA & (1<<1))){
+		i = 0;
+		TCNT1=0;
+		if(addr > 7) while(TCNT1<(time/4));
+		while(i < 6){
+			data = eepromRead(addr);
+			addr++;
+		
+			if(i == 1) {
+				PORTB = data;
+				USART_Transmit(data);
+			}
+			
+			else USART_Transmit(data);
+			i++;
+		}
+		if(i == 6){
+			timeH = eepromRead(addr+8);
+			addr++;
+			timeL = eepromRead(addr+8);
+			addr++;
+			time = (timeH<<8)|(timeL);
+			
+		}
+				
+	}
+}
+unsigned int light_setup(){
+
+    DDRB = 0xFF;
+	DDRA = 0x00;
+	ADMUX = (1<<REFS1) | (1<<REFS0); //set vref as internal voltage
+	ADMUX |= (1<<MUX2) | (1<<MUX1) | (1<<MUX0); //sets ADC7 as input
+	ADCSRA = (1<<ADEN);
+	//PORTB = 0x01;
+	ADCSRA |= (1<<ADSC);
+	if(ADC > 350 ){
+			return 0; //playslow
+		}
+		else if(ADC<100){
+			return 2; //playfast
+		}
+		else{
+			return 1;//playnormal
+		}
+}
+
+void midi_Flush(void){
+    unsigned char x;
+    while (UCSRA & (1 << RXC) ) x = UDR;
+}
+
+int main (void){
+	DDRA = 0x00; //set A as inputs
+	DDRB = 0xFF; //set B as outputs
+	PORTB = 0xFF; //turn off all LEDS
+	_delay_ms(500);
+	unsigned int maxAddr;
+	unsigned int lightNum;
+	USART_init(7);
+	//setup timer
+	TCCR1B |= (1<<CS12) ; //Sets up prescaler to /256 and starts clock 
+	while(1){
+		uint8_t rec = PINA & (1<<0);
+        uint8_t play = PINA & (1<<1);
+        uint8_t mod = PINA & (1<<2);
+		if(rec && (!play)){ //Recording Mode - Switch 1 On, Switch 2 off
+			maxAddr=0;
+			maxAddr = recordingNotes();
+			
+		}
+		if((play && mod)){ //Modify Mode - Switch 2 & 3 on
+			lightNum = light_setup();
+			if(lightNum==0){//low light
+				PORTB=0xF4;
+				_delay_ms(1000);
+				playbackSlow(maxAddr);
+			}
+			else if(lightNum==2){// shine bright like diamond 
+				PORTB=0xFF;
+				_delay_ms(1000);
+				playbackFast(maxAddr);
+			}
+			else if(lightNum==1){//regular 
+				PORTB=0xF0;
+				_delay_ms(1000);
+				playbackNormal(maxAddr);
+			}
+		}
+		if(play && !rec && !mod){ //Playback Mode - Switch 2 on, Switch 3 off
+			//PORTB = 0xFF;
+			playbackNormal(maxAddr);
+		}
+		else{
+			PORTB = 0;
+			midi_Flush(); 
+		}
+
+	}
+	
+}
+
+
+
